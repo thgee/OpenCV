@@ -5,6 +5,16 @@
 //		---> drag 1, 2에서 모든 변수를 포함시킨다
 // *** 모든 누적데이터는 변수에 들어있고 행렬은 껍데기일 뿐이다.
 
+// 변수를 전역으로 빼고 모든 함수에서 행렬을 전부 적용한다
+
+// 원래 찍었던 P 기준으로 변환하고 그 결과사진을 새롭게 찍은 P 기준으로 다시 변환해야 하는데
+// 이렇게 변수에 모든 데이터를 기억하도록 하면 
+// 마지막에 찍힌 P 기준으로 단 한번의 변환에 모든게 섞이게 된다.
+
+// 그래서 R버튼 클릭 시에 src을 dst로 갱신해주면
+// 원본사진이 잘리거나 디지털 풍화가 일어난다.
+
+// 따라서 R버튼 클릭시에 현재 회전축 까지의 변환을 기억하는 행렬을 만들어서 곱해주면 어떨까?
 
 // 행렬 복사 함수
 void copyMatrix(float IM[][3], float copy_IM[][3]) {
@@ -47,14 +57,11 @@ void setTranslateMatrix(float M[][3], float tx, float ty) {
 // 3X3 행렬의 곱을 만들어주는 함수
 void setMultiplyMatrix(float M[][3], float A[][3], float B[][3]) {
 	// M = A*B
-	float temp1[3][3]; float temp2[3][3];
-	copyMatrix(A, temp1);
-	copyMatrix(B, temp2);
 	for (int i = 0; i < 3; i++)
 		for (int j = 0; j < 3; j++) {
 			M[i][j] = 0; // 0으로 초기화
 			for (int k = 0; k < 3; k++)
-				M[i][j] += temp1[i][k] * temp2[k][j];
+				M[i][j] += A[i][k] * B[k][j];
 		}
 }
 
@@ -96,6 +103,19 @@ float scale = 1.0f;
 float tx = 0.f;
 float ty = 0.f;
 
+// 원점이동TM1 -> 확대축소M2 -> 회전M1 -> 사진이동TM -> 원위치이동TM2
+
+float M1[3][3];
+float M2[3][3];
+float TM[3][3];
+float TM1[3][3];
+float TM2[3][3];
+float temp1[3][3];
+float temp2[3][3];
+float temp3[3][3];
+float temp4[3][3];
+
+float rem[3][3]; // 이전 회전축에서의 변환을 기억하는 행렬
 
 CvPoint pt1; // L버튼을 클릭한 지점을 기억하고 있는 전역변수
 int draging = 0; // 그냥 드래그 하면 1, shift + 클릭 후 드래그 하면 2로 설정 
@@ -115,6 +135,16 @@ void myMouse(int event, int x, int y, int flags, void* param) {
 	}
 	if (event == CV_EVENT_RBUTTONDOWN) {
 		P = cvPoint(x, y);
+		
+
+		theta = 0.0f; // 변수값들 초기화
+		scale = 1.0f;
+		tx = 0.f;
+		ty = 0.f;
+
+
+		copyMatrix(IM, rem); // IM을 rem에 저장
+
 		cvCopy(dst, buf);
 		cvCircle(buf, P, 5, cvScalar(255, 0, 0), -1);
 		cvShowImage("dst", buf);
@@ -122,45 +152,23 @@ void myMouse(int event, int x, int y, int flags, void* param) {
 	if (event == CV_EVENT_MOUSEMOVE && (flags & CV_EVENT_FLAG_LBUTTON) == CV_EVENT_FLAG_LBUTTON) { // 드래그
 
 		if (draging == 1) { // 일반 드래그 일 때
-			printf("scale : %f theta : %f\n", scale, theta);
 			CvPoint pt2 = cvPoint(x, y); // 마우스를 드래그할 때의 좌표를 pt2에 저장
 			// 회전
 			float theta1 = atan2(pt1.y - P.y, pt1.x - P.x); // atan을 이용하면 좌표에 따른 각도가 결과값으로 나옴
 			float theta2 = atan2(pt2.y - P.y, pt2.x - P.x); // atan2인 이유는 tan범위 때문에 opencv에서 편의상 만든 함수임
-			float M1[3][3];
 			// 각도는 degree로 넣어야 하는데 atan2에서 나오는 값은 radian이라 변환이 필요
 			theta += (theta2 - theta1) / 3.141592 * 180.0f; // 각도가 계속 누적이 되어야 현재 그림에서 각도 변경이 가능하다
-			setRotateMatrix(M1, -theta); // 사진을 회전하는 IM행렬 생성
 
 			// 확대축소
-			float M2[3][3];
 			float r1 = sqrt((pt1.x - P.x) * (pt1.x - P.x) + (pt1.y - P.y) * (pt1.y - P.y)); // pt1과 회전축 사이의 거리
 			float r2 = sqrt((pt2.x - P.x) * (pt2.x - P.x) + (pt2.y - P.y) * (pt2.y - P.y)); // pt2와 회전축 사이의 거리
 			scale *= (r2 / r1);
-			setScaleMatrix(M2, 1.0f / scale, 1.0f / scale);
+
+			
 
 			// TM1은 그림의 중심을 원점으로 이동시키는 행렬
 			// TM2는 다시 그림을 원위치로 이동시키는 행렬
-			// M = TM2 M1 M2 TM1
-			// IM = TM1 M2 M1 TM2
-			float TM1[3][3];
-			float TM2[3][3];
-			float temp1[3][3];
-			float temp2[3][3];
-			float temp3[3][3];
 
-			setTranslateMatrix(TM1, P.x, P.y);
-			setTranslateMatrix(TM2, -P.x, -P.y);
-			setMultiplyMatrix(temp1, TM1, M2);
-			setMultiplyMatrix(temp2, M1, TM2);
-			setMultiplyMatrix(IM, temp1, temp2);
-
-			applyAffineTransform(src, dst, IM); // 변환행렬 적용
-
-			cvCopy(dst, buf);
-			cvCircle(buf, P, 5, cvScalar(255, 0, 0), -1); // 회전축을 그려줌
-
-			cvShowImage("dst", buf);
 
 			pt1 = pt2; // 이걸 안해주면 드래그 시에 pt1이 처음상태에 고정되고 pt2는 누적적으로 커지므로 그림이 확확 커진다.
 					   // pt1을 현재 위치인 pt2로 초기화를 해주어야 한다.
@@ -170,20 +178,38 @@ void myMouse(int event, int x, int y, int flags, void* param) {
 			// 여기서 중요한것은 사진의 위치가 변경될 때 회전축(P) 좌표를 함께 변동시켜 주어야 한다는 점이다.
 
 			CvPoint pt2 = cvPoint(x, y); // 마우스를 드래그할 때의 좌표를 pt2에 저장
-			tx += pt2.x - pt1.x; // 마우스를 클릭한 위치부터 떼는 위치까지의 x, y좌표 변화량만큼 사진이 이동해야 한다.
-			ty += pt2.y - pt1.y;
-			float TM[3][3];
-			printf("tx : %f ty : %f\n", tx, ty);
 
-			copyMatrix(IM, copy_IM);
+			tx += (pt2.x - pt1.x); // 마우스를 클릭한 위치부터 d떼는 위치까지의 x, y좌표 변화량만큼 사진이 이동해야 한다.
+			ty += (pt2.y - pt1.y);
+			P.x += (pt2.x - pt1.x); // 회전축도 함께 이동해야 한다
+			P.y += (pt2.y - pt1.y);
 
-			setTranslateMatrix(TM, -tx, -ty);
-
-			applyAffineTransform(src, dst, TM);
-
-			cvShowImage("dst", dst);
 			pt1 = pt2;
 		}
+
+
+		setRotateMatrix(M1, -theta); // 사진을 회전하는 IM행렬 생성
+		setScaleMatrix(M2, 1.0f / scale, 1.0f / scale);
+		setTranslateMatrix(TM1, P.x, P.y);
+		setTranslateMatrix(TM2, -P.x, -P.y);
+		setTranslateMatrix(TM, -tx, -ty);
+
+	/*	 M = TM2 M1 M2 TM TM1 rem
+		 IM = rem TM1 TM M2 M1 TM2  */
+
+		setMultiplyMatrix(temp1, rem, TM1);
+		setMultiplyMatrix(temp2, TM, M2);
+		setMultiplyMatrix(temp3, M1, TM2);
+		setMultiplyMatrix(temp4, temp1, temp2);
+		setMultiplyMatrix(IM, temp4, temp3);
+		
+
+		applyAffineTransform(src, dst, IM); // 변환행렬 적용
+
+		cvCopy(dst, buf);
+		cvCircle(buf, P, 5, cvScalar(255, 0, 0), -1); // 회전축을 그려줌
+
+		cvShowImage("dst", buf);
 	}
 }
 
@@ -191,14 +217,17 @@ void myMouse(int event, int x, int y, int flags, void* param) {
 int main() {
 
 	cvCopy(src, dst);
-	cvCopy(dst, buf);
 
-	cvCircle(buf, P, 5, cvScalar(255, 0, 0), -1);
-
+	// 초깃값을 기본행렬로 안해주면 shift나 Lbutton 을 맨 처음 클릭 시에 multiplyMatrix에 이상한 행렬이 들어가서 변환이 비정상적으로 된다.
 	setIdentityMatrix(IM);
+	setIdentityMatrix(rem);
+	setIdentityMatrix (M1);
+	setIdentityMatrix (M2);
+	setIdentityMatrix (TM);
+	setIdentityMatrix (TM1);
+	setIdentityMatrix (TM2);
 
-
-	cvShowImage("dst", buf);
+	cvShowImage("dst", dst);
 	cvSetMouseCallback("dst", myMouse); // dst이미지에서 myMouse함수 적용 (암기) 
 	cvWaitKey();
 
